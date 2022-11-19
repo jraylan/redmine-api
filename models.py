@@ -162,7 +162,7 @@ class Checklist(Model):
 
     @staticmethod
     def get_table_name():
-        return "checklist"
+        return "checklists"
 
     @property
     def update_fields(self) -> OrderedDict:

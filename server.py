@@ -99,15 +99,32 @@ def create_app(allowed_hosts, log, test_config=None):
     @login_required
     def create_issues(*args, **kwargs):
         try:
+            data = request.get_json(force=True)
+            
+            checklists = data.pop('checklists', [])
+
             issue = models.Issue.from_dict(
-                request.get_json(force=True)
+                data
             )
             issue.author_id = kwargs['user'].id
             cursor = kwargs['cursor']
             cursor.execute(*issue.insert_query)
-            rows = cursor.fetchall()            
+            rows = cursor.fetchall()
             columns=[desc[0] for desc in cursor.description]
             issue.update_from_dict(dict(zip(columns, rows[0])))
+            
+            checklist_pos = []
+            for pos,checklist in enumerate(checklists):
+                checklist['issue_id'] = issue.id
+                if checklist.get('position') and isinstance(checklist.get('position'), int):
+                    pos = checklist.pop('position')
+                if pos in checklist_pos:
+                    pos = max(checklist_pos) + 1
+                checklist_pos.append(pos)
+                checklist['position'] = pos
+                checklist = models.Checklist.from_dict(checklist)
+                cursor.execute(*checklist.insert_query)
+
             return issue.to_json()
         except Exception as e:
             traceback.print_exc()
