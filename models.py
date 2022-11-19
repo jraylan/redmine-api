@@ -167,13 +167,13 @@ class Checklist(Model):
     @property
     def update_fields(self) -> OrderedDict:
         fields = OrderedDict({
-            'is_done': self.is_done,
+            'is_done': self.is_done or False,
             'subject': self.subject,
             'position': self.position,
             'issue_id': self.issue_id,
-            'created_at': self.created_at,
-            'updated_at': self.updated_at,
-            'is_section': self.is_section
+            'created_at': self.created_at or datetime.now(),
+            'updated_at': self.updated_at or datetime.now(),
+            'is_section': self.is_section or False
         })
         return fields
 

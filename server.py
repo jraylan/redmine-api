@@ -1,11 +1,9 @@
-from datetime import datetime, date
-import traceback
-from flask import Flask, request
 from base64 import b64decode
-import os
-import json
-import psycopg2
+from flask import Flask, request
 import models
+import os
+import psycopg2
+import traceback
 
 def create_app(allowed_hosts, log, test_config=None):
     app = Flask(__name__, instance_relative_config=True)
@@ -25,7 +23,9 @@ def create_app(allowed_hosts, log, test_config=None):
             cursor = connection.cursor()
             kwargs['cursor'] = cursor
             try:
+                cursor.execute("BEGIN")
                 result = view(*args, **kwargs)
+                cursor.execute("COMMIT")
             except Exception as e:
                 traceback.print_exc()
                 connection.rollback()
@@ -110,22 +110,31 @@ def create_app(allowed_hosts, log, test_config=None):
             cursor = kwargs['cursor']
             cursor.execute(*issue.insert_query)
             rows = cursor.fetchall()
-            columns=[desc[0] for desc in cursor.description]
+            columns = [desc[0] for desc in cursor.description]
             issue.update_from_dict(dict(zip(columns, rows[0])))
             
-            checklist_pos = []
-            for pos,checklist in enumerate(checklists):
-                checklist['issue_id'] = issue.id
-                if checklist.get('position') and isinstance(checklist.get('position'), int):
-                    pos = checklist.pop('position')
-                if pos in checklist_pos:
-                    pos = max(checklist_pos) + 1
-                checklist_pos.append(pos)
-                checklist['position'] = pos
-                checklist = models.Checklist.from_dict(checklist)
+            response = issue.to_json()
+            checklists_pos = []
+            checklists_json = []
+            for pos,chkls in enumerate(checklists):
+                chkls['issue_id'] = issue.id
+                if chkls.get('position') and isinstance(chkls.get('position'), int):
+                    pos = chkls.pop('position')
+                if pos in checklists_pos:
+                    pos = max(checklists_pos) + 1
+                checklists_pos.append(pos)
+                chkls['position'] = pos
+                checklist = models.Checklist.from_dict(chkls)
                 cursor.execute(*checklist.insert_query)
+                rows = cursor.fetchall()
+                columns = [desc[0] for desc in cursor.description]
+                checklist.update_from_dict(dict(zip(columns, rows[0])))
+                checklists_json.append(checklist.to_json())
+            
+            if checklists_json:
+                response['checklists'] = checklists_json
+            return response
 
-            return issue.to_json()
         except Exception as e:
             traceback.print_exc()
             return {"error": str(e)}
