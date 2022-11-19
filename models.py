@@ -2,33 +2,79 @@ from collections import OrderedDict
 from datetime import datetime
 
 
+
+
+AVAILABLE_TYPES = (
+    str,
+    int,
+    float,
+    datetime,
+    bool,
+    type(None)
+)
+
+SERIALIZABLE_TYPES = (
+    str,
+    int,
+    float,
+    bool,
+    type(None)
+)
+
 class Model(object):
 
     def __init__(self, **kwargs):
-        for k,v in kwargs.values():
-            if hasattr(self, k):
+        for k,v in kwargs.items():
+            if hasattr(self, k) and isinstance(v,AVAILABLE_TYPES):
                 setattr(self, k, v)
 
-                
     @classmethod
-    def from_query(cls, query):
+    def from_dict(cls, query):
         return cls(**query)
 
     def to_json(self):
         return OrderedDict([
-            (k,v) for k,v in self.__dict__.items() if not k.startswith('_') and isinstance(v, (str, int, float, datetime, bool, type(None)))
+            (k, str(v) if not isinstance(v, SERIALIZABLE_TYPES) else v)
+            for k,v in self.__dict__.items()\
+            if not k.startswith('_') and isinstance(v, AVAILABLE_TYPES)
         ])
+
+    def update_from_dict(self, query):
+        for k, v in query.items():
+            if hasattr(self, k) and isinstance(v,AVAILABLE_TYPES):
+                setattr(self, k, v)
+
+    def update_fields_query(self, **kwargs):
+        if not self.id:
+            raise Exception('Cannot update fields on an object without an id')
+        fields = {
+            k: v for k, v in kwargs.items()
+            if hasattr(self, k) and isinstance(v,AVAILABLE_TYPES)
+        }
+        query = f'''
+            UPDATE {self.table_name}
+            SET {','.join([f'{k}=%s' for k in fields])}
+            WHERE id=%s
+        '''.strip()
+
+        return query, [*fields.values(),self.id]
+
+    @property
+    def table_name(self):
+        return self.get_table_name()
 
     @property
     def insert_query(self):
-        fields = self.fields
+        fields = self.insert_fields
         query = f'''
             INSERT INTO {self.table_name}
-                ({''.join(fields.keys())}))
+                (id, {','.join(fields.keys())})
             VALUES
-                ({','.join(['%s' for _ in fields])})
+                (default, {','.join(['%s' for _ in fields])})
+            RETURNING *;
         '''.strip()
         return query, tuple(fields.values())
+    
 
     @property
     def update_query(self):
@@ -49,10 +95,12 @@ class Model(object):
         query = OrderedDict({})
         for k,v in kwargs.items():
             if hasattr(cls, k):
-                query[k] = v                
+                query[k] = v
+        if not query:
+            return f'SELECT * FROM {cls.get_table_name()}', ()
         return f'''
-            SELECT * FROM {cls.table_name}
-            WHERE {','.join([f'{k}=%s' for k in kwargs])}
+            SELECT * FROM {cls.get_table_name()}
+            WHERE {' AND '.join([f'{k}=%s' for k in kwargs])}
         ''', tuple(kwargs.values())
 
 
@@ -74,7 +122,6 @@ class Issue(Model):
     @property
     def insert_fields(self) -> OrderedDict:
         fields = OrderedDict({
-            'id': None,
             'tracker_id': self.tracker_id,
             'project_id': self.project_id,
             'subject': self.subject,
@@ -84,21 +131,22 @@ class Issue(Model):
             'assigned_to_id': self.assigned_to_id,
             'priority_id': self.priority_id,
             'author_id': self.author_id,
-            'created_on': self.created_on,
-            'updated_on': self.updated_on,
-            'root_id': self.root_id,
+            'created_on': self.created_on or datetime.now(),
+            'updated_on': self.updated_on or datetime.now(),
+            'lock_version': 1,
+            'lft': 1,
+            'rgt': 2,
+            'root_id': self.root_id or self.id,
         })
         return fields
-    
+
     @property
     def update_fields(self) -> OrderedDict:
         fields = self.insert_fields
-        del fields[id]
         return fields
 
-    @classmethod
-    @property
-    def table_name(cls):
+    @staticmethod
+    def get_table_name():
         return "issues"
 
 
@@ -108,19 +156,17 @@ class Checklist(Model):
     subject:str = None
     position:int = None
     issue_id:int = None
-    created_at:datetime = None        
-    updated_at:datetime = None        
+    created_at:datetime = None
+    updated_at:datetime = None
     is_section:bool = None
 
-    @classmethod
-    @property
-    def table_name(cls):
+    @staticmethod
+    def get_table_name():
         return "checklist"
 
     @property
-    def insert_fields(self) -> OrderedDict:
+    def update_fields(self) -> OrderedDict:
         fields = OrderedDict({
-            'id': None,
             'is_done': self.is_done,
             'subject': self.subject,
             'position': self.position,
@@ -128,13 +174,12 @@ class Checklist(Model):
             'created_at': self.created_at,
             'updated_at': self.updated_at,
             'is_section': self.is_section
-        })        
+        })
         return fields
-    
+
     @property
-    def update_fields(self) -> OrderedDict:
-        fields = self.insert_fields
-        del fields[id]
+    def insert_fields(self) -> OrderedDict:
+        fields = self.update_fields
         return fields
 
 
@@ -144,9 +189,8 @@ class User(Model):
     firstName:str = None
     lastName:str = None
 
-    @classmethod
-    @property
-    def table_name(cls):
+    @staticmethod
+    def get_table_name():
         return "users"
 
     @classmethod
@@ -156,9 +200,9 @@ class User(Model):
             id, login,
             firstName, lastName
         FROM
-            {cls.table_name}
+            {cls.get_table_name()}
         WHERE
-            login = %s
-            password = encode(digest(encode(digest(%s, 'sha1'), 'hex')||salt, 'sha1'), 'hex');
+            login = %s AND
+             hashed_password = encode(digest(salt||encode(digest(%s, 'sha1'), 'hex'), 'sha1'), 'hex');
         ''', (login, password)
 
