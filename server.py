@@ -83,12 +83,23 @@ def create_app(allowed_hosts, log, test_config=None):
             cursor.execute(query, params)
             rows = cursor.fetchall()
             columns=[desc[0] for desc in cursor.description]
-            return [
-                models.Issue.from_dict(
-                    dict(zip(columns, row))
-                ).to_json()
-                for row in rows
-            ]
+
+            result = []
+            for row in rows:
+                issue = models.Issue.from_dict(
+                        dict(zip(columns, row))
+                    ).to_json()
+                cursor.execute(*models.Checklist.filter(issue_id=issue['id']))
+                cl_rows = cursor.fetchall()
+                cl_columns = [desc[0] for desc in cursor.description]
+                issue['checklist'] = [
+                    models.ChecklistItem.from_dict(
+                        dict(zip(cl_columns, cl_row))
+                    ).to_json()
+                    for cl_row in cl_rows
+                ]
+                result.append(issue)
+            return result
         except Exception as e:
             traceback.print_exc()
             return {"error": str(e)}
